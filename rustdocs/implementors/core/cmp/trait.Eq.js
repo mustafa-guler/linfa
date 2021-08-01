@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["linfa_trees"] = [{"text":"impl&lt;F, L&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.54.0/core/cmp/trait.Eq.html\" title=\"trait core::cmp::Eq\">Eq</a> for <a class=\"struct\" href=\"linfa_trees/struct.TreeNode.html\" title=\"struct linfa_trees::TreeNode\">TreeNode</a>&lt;F, L&gt;","synthetic":false,"types":["linfa_trees::decision_trees::algorithm::TreeNode"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

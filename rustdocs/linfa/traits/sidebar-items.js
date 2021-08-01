@@ -1,0 +1,1 @@
+initSidebarItems({"trait":[["Fit","Fittable algorithms"],["IncrementalFit","Incremental algorithms"],["Predict","Predict with model"],["PredictInplace","Predict with model into a mutable reference of targets."],["Transformer","Transformation algorithms"]]});
