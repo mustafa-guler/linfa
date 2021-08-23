@@ -75,7 +75,7 @@ impl<F: Float, L: Label> ExtraTreesParams<F, L> {
         if !self.decision_tree_params.random_split {
             return Err(Error::Parameters(format!(
                 "Extra trees should always use a random split, but random_split is currently set to {}",
-                self.decision_tree_params.random_split
+                false.to_string()
             )));
         }
 

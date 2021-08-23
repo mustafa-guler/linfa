@@ -1,5 +1,5 @@
 //!
-//! # Tree based learning
+//! # Decision tree learning
 //! `linfa-trees` aims to provide pure rust implementations
 //! of decison tree and forest learning algorithms.
 //!
@@ -11,7 +11,7 @@
 //! Decision Trees (DTs) are a non-parametric supervised learning method used for classification and regression.
 //! The goal is to create a model that predicts the value of a target variable by learning simple decision rules
 //! inferred from the data features.
-//! 
+//!
 //! Extremely Randomized Trees (Extra Trees) is an ensemble learning method for classification and regression. It uses
 //! many decision trees and randomized splits to achieve improved accuracy and performance.
 //!

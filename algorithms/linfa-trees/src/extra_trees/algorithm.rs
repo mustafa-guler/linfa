@@ -31,8 +31,6 @@ impl<F: Float, L: Label + std::fmt::Debug> ExtraTrees<F, L> {
     /// * `num_estimators = 100`
     /// * `max_features = None`
     /// The `max_features` default of `None` will be overriden to the square root of the number of features when a dataset is provided.
-    // Violates the convention that new should return a value of type `Self`
-    #[allow(clippy::new_ret_no_self)]
     pub fn params() -> ExtraTreesParams<F, L> {
         ExtraTreesParams {
             decision_tree_params: DecisionTree::params().random_split(true),
@@ -50,8 +48,8 @@ where
 {
     type Object = ExtraTrees<F, L>;
 
-    /// Fit extremely randomized trees using `hyperparamters` on the dataset consisting of
-    /// a matrix of features `x` and an array of labels `y`.
+    /// Fit extremely randomized trees using hyperparameters in `self` on the `dataset`
+    /// consisting of a matrix of features and an array of labels.
     fn fit(&self, dataset: &DatasetBase<ArrayBase<D, Ix2>, T>) -> Result<Self::Object> {
         self.decision_tree_params.validate()?;
 
@@ -62,16 +60,15 @@ where
 
         // Overrides the `max_features` hyperparameter once the dataset is provided
         // to the square root of the number of features if it is `None`
-        let true_max_features = match self.max_features {
-            None => (num_features as f64).sqrt() as usize,
-            Some(x) => x,
-        };
+        let true_max_features = self
+            .max_features
+            .unwrap_or_else(|| (num_features as f64).sqrt() as usize);
 
-        let mut all_trees = Vec::new();
+        let mut all_trees = Vec::with_capacity(self.num_estimators);
 
         // Create all decision trees
         for _ in 0..self.num_estimators {
-            let setup = set_up_tree(records, &feature_names);
+            let setup = set_up_dataset(records, &feature_names);
 
             let mut root_node = TreeNode::fit(
                 dataset,
@@ -124,7 +121,7 @@ fn make_prediction<F: Float, L: Label>(
     // Count predictions across all trees
     let mut prediction_frequencies: HashMap<L, f32> = HashMap::with_capacity(model.num_features);
     for root_node in &model.all_trees {
-        let prediction = make_prediction(x, &root_node);
+        let prediction = make_prediction(x, root_node);
         let value = prediction_frequencies.entry(prediction).or_default();
         *value += 1.0;
     }

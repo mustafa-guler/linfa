@@ -1,6 +1,6 @@
 //! Linear decision trees
 //!
-use rand::Rng;
+use rand::{prelude::SliceRandom, Rng};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -201,8 +201,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
     // May consider only one randomly selected split if the hyperparameter `random_split` is enabled
     fn best_split<D: Data<Elem = F>, T: AsTargets<Elem = L> + Labels<Elem = L>>(
         parent_class_freq: &HashMap<L, f32>,
-        feature_idx: usize,
-        sorted_index: &SortedIndex<F>,
+        (feature_idx, sorted_index): (usize, &SortedIndex<F>),
         data: &DatasetBase<ArrayBase<D, Ix2>, T>,
         mask: &RowMask,
         hyperparameters: &DecisionTreeParams<F, L>,
@@ -218,16 +217,13 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
         let mut weight_on_right_side = total_weight;
         let mut weight_on_left_side = 0.0;
 
-        // Consider a single random split rather than an optimal split
-        // if `random_split` is enabled.
-        let mut random_split_idx = 0;
+        // Generate all valid observations and produce a random split which will
+        // only be used if `random_split` is enabled
+        let valid_split_points: Vec<usize> = (0..mask.mask.len())
+            .filter(|&i| mask.mask[sorted_index.sorted_values[i].0])
+            .collect();
 
-        if hyperparameters.random_split {
-            let valid_split_points: Vec<usize> = (0..mask.mask.len())
-                .filter(|&i| mask.mask[sorted_index.sorted_values[i].0])
-                .collect();
-            random_split_idx = rand::thread_rng().gen_range(0..valid_split_points.len());
-        }
+        let random_split_idx = *valid_split_points.choose(&mut rand::thread_rng()).unwrap();
 
         // We start by putting all available observations in the right subtree
         // and then move the (sorted by `feature_idx`) observations one by one to
@@ -237,14 +233,9 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
         // The resulting split will then have the observations with a value of their `feature_idx`
         // feature smaller than the split value in the left subtree and the others still in the right
         // subtree
-        for i in 0..mask.mask.len() - 1 {
+        for i in valid_split_points {
             // (index of the observation, value of its `feature_idx` feature)
             let (presorted_index, mut split_value) = sorted_index.sorted_values[i];
-
-            // Skip if the observation is unavailable in this subtree
-            if !mask.mask[presorted_index] {
-                continue;
-            }
 
             // Target and weight of the current observation
             let sample_class = &target[presorted_index];
@@ -278,8 +269,8 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
                 continue;
             }
 
-            // Don't need to compute the quality of other arbitrary splits,
-            // will only consider a split past the random split
+            // Skip indices until we hit `random_split_idx`, since for random splits
+            // we only need to consider the randomly selected index
             if hyperparameters.random_split && i < random_split_idx {
                 continue;
             }
@@ -351,8 +342,8 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
         let mut test_features: HashMap<usize, &SortedIndex<F>> =
             sorted_indices.iter().enumerate().collect();
 
-        if matches!(max_features, Some(_)) {
-            test_features = (0..max_features.unwrap())
+        if let Some(max_features) = max_features {
+            test_features = (0..max_features)
                 .map(|_| {
                     let idx = rand::thread_rng().gen_range(0..sorted_indices.len());
                     (idx, test_features[&idx])
@@ -365,8 +356,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
         for (feature_idx, sorted_index) in test_features {
             TreeNode::best_split(
                 &parent_class_freq,
-                feature_idx,
-                sorted_index,
+                (feature_idx, sorted_index),
                 data,
                 mask,
                 hyperparameters,
@@ -575,9 +565,11 @@ impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D
     }
 }
 
-pub(crate) fn set_up_tree<'a, F: Float, D: Data<Elem = F>>(
+// Applies preprocessing to dataset, generating an intial mask which is true for
+// all observations and sorted observations for each feature
+pub(crate) fn set_up_dataset<'a, F: Float, D: Data<Elem = F>>(
     records: &ArrayBase<D, Ix2>,
-    feature_names: &'a Vec<String>,
+    feature_names: &'a [String],
 ) -> (RowMask, Vec<SortedIndex<'a, F>>) {
     let all_idxs = RowMask::all(records.nrows());
     let sorted_indices: Vec<SortedIndex<F>> = (0..(records.ncols()))
@@ -602,7 +594,7 @@ where
         self.validate()?;
 
         let (records, feature_names) = (dataset.records(), dataset.feature_names());
-        let setup = set_up_tree(records, &feature_names);
+        let setup = set_up_dataset(records, &feature_names);
         let mut root_node = TreeNode::fit(dataset, &setup.0, self, &setup.1, 0, None)?;
         root_node.prune();
 
@@ -619,9 +611,7 @@ impl<F: Float, L: Label + std::fmt::Debug> DecisionTree<F, L> {
     /// * `max_depth = None`
     /// * `min_weight_split = 2.0`
     /// * `min_weight_leaf = 1.0`
-    /// * `min_impurity_decrease = 0.00001`
-    // Violates the convention that new should return a value of type `Self`
-    #[allow(clippy::new_ret_no_self)]
+    /// * `min_impurity_decrease = 0.00001`    
     pub fn params() -> DecisionTreeParams<F, L> {
         DecisionTreeParams {
             split_quality: SplitQuality::Gini,
@@ -715,10 +705,6 @@ impl<F: Float, L: Label + std::fmt::Debug> DecisionTree<F, L> {
     ///
     pub fn export_to_tikz(&self) -> Tikz<F, L> {
         Tikz::new(self)
-    }
-
-    pub fn root_node_by_val(self) -> TreeNode<F, L> {
-        self.root_node
     }
 }
 
