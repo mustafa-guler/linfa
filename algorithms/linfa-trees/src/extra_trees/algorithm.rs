@@ -33,8 +33,7 @@ impl<F: Float, L: Label + std::fmt::Debug> ExtraTrees<F, L> {
     /// The `max_features` default of `None` will be overriden to the square root of the number of features when a dataset is provided.
     pub fn params() -> ExtraTreesParams<F, L> {
         ExtraTreesParams {
-            decision_tree_params: DecisionTree::params().random_split(true),
-            max_features: None,
+            decision_tree_params: DecisionTree::params().random_split(true).max_features(None),
             num_estimators: 100,
         }
     }
@@ -51,16 +50,16 @@ where
     /// Fit extremely randomized trees using hyperparameters in `self` on the `dataset`
     /// consisting of a matrix of features and an array of labels.
     fn fit(&self, dataset: &DatasetBase<ArrayBase<D, Ix2>, T>) -> Result<Self::Object> {
-        self.decision_tree_params.validate()?;
-
         let num_features = dataset.records().ncols();
-        self.validate(num_features)?;
+        self.decision_tree_params.validate(num_features)?;
+        self.validate()?;
 
         let (records, feature_names) = (dataset.records(), dataset.feature_names());
 
         // Overrides the `max_features` hyperparameter once the dataset is provided
         // to the square root of the number of features if it is `None`
         let true_max_features = self
+            .decision_tree_params
             .max_features
             .unwrap_or_else(|| (num_features as f64).sqrt() as usize);
 

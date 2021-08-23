@@ -591,7 +591,8 @@ where
     /// Fit a decision tree using `hyperparamters` on the dataset consisting of
     /// a matrix of features `x` and an array of labels `y`.
     fn fit(&self, dataset: &DatasetBase<ArrayBase<D, Ix2>, T>) -> Result<Self::Object> {
-        self.validate()?;
+        let num_features = dataset.records().ncols();
+        self.validate(num_features)?;
 
         let (records, feature_names) = (dataset.records(), dataset.feature_names());
         let setup = set_up_dataset(records, &feature_names);
@@ -600,7 +601,7 @@ where
 
         Ok(DecisionTree {
             root_node,
-            num_features: dataset.records().ncols(),
+            num_features,
         })
     }
 }
@@ -621,6 +622,7 @@ impl<F: Float, L: Label + std::fmt::Debug> DecisionTree<F, L> {
             min_impurity_decrease: F::cast(0.00001),
             phantom: PhantomData,
             random_split: false,
+            max_features: None,
         }
     }
 
@@ -987,7 +989,7 @@ mod tests {
     fn panic_min_impurity_decrease() {
         DecisionTree::<f64, bool>::params()
             .min_impurity_decrease(0.0)
-            .validate()
+            .validate(0)
             .unwrap();
     }
 }

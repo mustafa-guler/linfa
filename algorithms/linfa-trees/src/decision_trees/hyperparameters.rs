@@ -64,6 +64,7 @@ pub struct DecisionTreeParams<F, L> {
     pub min_weight_leaf: f32,
     pub min_impurity_decrease: F,
     pub random_split: bool,
+    pub max_features: Option<usize>,
 
     pub phantom: PhantomData<L>,
 }
@@ -112,12 +113,18 @@ impl<F: Float, L: Label> DecisionTreeParams<F, L> {
         self
     }
 
+    /// Sets
+    pub fn max_features(mut self, max_features: Option<usize>) -> Self {
+        self.max_features = max_features;
+        self
+    }
+
     /// Checks the correctness of the hyperparameters
     ///
     /// ### Panics
     ///
     /// If the minimum impurity increase is not greater than zero
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self, num_features: usize) -> Result<()> {
         if self.min_impurity_decrease < F::epsilon() {
             return Err(Error::Parameters(format!(
                 "Minimum impurity decrease should be greater than zero, but was {}",
@@ -125,6 +132,19 @@ impl<F: Float, L: Label> DecisionTreeParams<F, L> {
             )));
         }
 
-        Ok(())
+        match self.max_features {
+            None => Ok(()),
+            Some(max) => {
+                if max > num_features {
+                    Err(Error::Parameters(format!(
+                "The max number of features to consider at each decision node {} cannot be greater than the total number of features {}",
+                max,
+                num_features
+            )))
+                } else {
+                    Ok(())
+                }
+            }
+        }
     }
 }

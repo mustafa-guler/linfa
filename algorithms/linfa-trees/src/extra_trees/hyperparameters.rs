@@ -43,7 +43,6 @@ use serde_crate::{Deserialize, Serialize};
 pub struct ExtraTreesParams<F, L> {
     pub decision_tree_params: DecisionTreeParams<F, L>,
     pub num_estimators: usize,
-    pub max_features: Option<usize>,
 }
 
 impl<F: Float, L: Label> ExtraTreesParams<F, L> {
@@ -59,19 +58,12 @@ impl<F: Float, L: Label> ExtraTreesParams<F, L> {
         self
     }
 
-    /// Sets the number of features that are randomly chosen and considered
-    /// at each decision node
-    pub fn max_features(mut self, max_features: Option<usize>) -> Self {
-        self.max_features = max_features;
-        self
-    }
-
     /// Checks the correctness of the hyperparameters
     ///
     /// ### Panics
     ///
     /// If the minimum impurity increase is not greater than zero
-    pub fn validate(&self, num_features: usize) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if !self.decision_tree_params.random_split {
             return Err(Error::Parameters(format!(
                 "Extra trees should always use a random split, but random_split is currently set to {}",
@@ -79,19 +71,6 @@ impl<F: Float, L: Label> ExtraTreesParams<F, L> {
             )));
         }
 
-        match self.max_features {
-            None => Ok(()),
-            Some(max) => {
-                if max > num_features {
-                    Err(Error::Parameters(format!(
-                "The max number of features to consider at each decision node {} cannot be greater than the total number of features {}",
-                max,
-                num_features
-            )))
-                } else {
-                    Ok(())
-                }
-            }
-        }
+        Ok(())
     }
 }
