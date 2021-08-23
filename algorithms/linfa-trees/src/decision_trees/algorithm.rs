@@ -360,7 +360,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
                 .collect();
         }
 
-        // Iterate over all features and find the best feature and split 
+        // Iterate over all features and find the best feature and split
         // Split may be random if the hyperparameter `random_split` is enabled
         for (feature_idx, sorted_index) in test_features {
             TreeNode::best_split(

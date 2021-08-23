@@ -11,6 +11,9 @@ use linfa::{
 };
 use std::collections::HashMap;
 
+#[cfg(feature = "serde")]
+use serde_crate::{Deserialize, Serialize};
+
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize),
@@ -55,7 +58,6 @@ where
         let num_features = dataset.records().ncols();
         self.validate(num_features)?;
 
-        
         let (records, feature_names) = (dataset.records(), dataset.feature_names());
 
         // Overrides the `max_features` hyperparameter once the dataset is provided

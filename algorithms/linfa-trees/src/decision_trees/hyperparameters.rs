@@ -105,7 +105,7 @@ impl<F: Float, L: Label> DecisionTreeParams<F, L> {
     }
 
     /// Sets whether or not a random split is considered at each decision node or all splits are considered
-    /// Will improve performance at the expense of accuracy. It is advised to use this only in forest contexts 
+    /// Will improve performance at the expense of accuracy. It is advised to use this only in forest contexts
     /// where there are many decision trees.
     pub fn random_split(mut self, random_split: bool) -> Self {
         self.random_split = random_split;

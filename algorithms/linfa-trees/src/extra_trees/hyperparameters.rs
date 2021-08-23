@@ -4,6 +4,9 @@ use linfa::{
     Float, Label,
 };
 
+#[cfg(feature = "serde")]
+use serde_crate::{Deserialize, Serialize};
+
 /// The set of hyperparameters that can be specified for fitting a
 /// [extra trees](struct.ExtraTrees.html).
 ///
@@ -20,8 +23,8 @@ use linfa::{
 /// // Set the parameters to the desired values
 /// let decision_tree_params = decision_tree_params.split_quality(SplitQuality::Entropy).max_depth(Some(5)).min_weight_leaf(2.).random_split(true);
 /// let params = params.decision_tree_params(decision_tree_params);
-/// 
-/// 
+///
+///
 /// // Load the data
 /// let (train, val) = linfa_datasets::iris().split_with_ratio(0.9);
 /// // Fit the decision tree on the training data
@@ -56,7 +59,7 @@ impl<F: Float, L: Label> ExtraTreesParams<F, L> {
         self
     }
 
-    /// Sets the number of features that are randomly chosen and considered 
+    /// Sets the number of features that are randomly chosen and considered
     /// at each decision node
     pub fn max_features(mut self, max_features: Option<usize>) -> Self {
         self.max_features = max_features;
