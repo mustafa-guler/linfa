@@ -1,4 +1,4 @@
-mod algorithm;
+pub(crate) mod algorithm;
 mod hyperparameters;
 mod iter;
 mod tikz;

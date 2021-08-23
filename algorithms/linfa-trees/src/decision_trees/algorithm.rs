@@ -1,5 +1,6 @@
 //! Linear decision trees
 //!
+use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -26,7 +27,7 @@ use serde_crate::{Deserialize, Serialize};
 /// left and right children can then only use a certain number of observations. In order to track
 /// that, the observations are masked with a boolean vector, hiding all observations which are not
 /// applicable in a lower tree.
-struct RowMask {
+pub(crate) struct RowMask {
     mask: Vec<bool>,
     nsamples: usize,
 }
@@ -74,7 +75,7 @@ impl RowMask {
 }
 
 /// Sorted values of observations with indices (always for a particular feature)
-struct SortedIndex<'a, F: Float> {
+pub(crate) struct SortedIndex<'a, F: Float> {
     feature_name: &'a str,
     sorted_values: Vec<(usize, F)>,
 }
@@ -196,13 +197,135 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
         }
     }
 
+    // Will find the best split of the possible splits available
+    // May consider only one randomly selected split if the hyperparameter `random_split` is enabled
+    fn best_split<D: Data<Elem = F>, T: AsTargets<Elem = L> + Labels<Elem = L>>(
+        parent_class_freq: &HashMap<L, f32>,
+        feature_idx: usize,
+        sorted_index: &SortedIndex<F>,
+        data: &DatasetBase<ArrayBase<D, Ix2>, T>,
+        mask: &RowMask,
+        hyperparameters: &DecisionTreeParams<F, L>,
+        target: ArrayBase<ndarray::ViewRepr<&L>, Ix1>,
+        best: &mut Option<(usize, F, f32)>,
+    ) {
+        let mut right_class_freq = parent_class_freq.clone();
+        let mut left_class_freq = HashMap::new();
+
+        // We keep a running total of the aggregate weight in the right split
+        // to avoid having to sum over the hash map
+        let total_weight = parent_class_freq.values().sum::<f32>();
+        let mut weight_on_right_side = total_weight;
+        let mut weight_on_left_side = 0.0;
+
+        // Consider a single random split rather than an optimal split
+        // if `random_split` is enabled.
+        let mut random_split_idx = 0;
+
+        if hyperparameters.random_split {
+            let valid_split_points: Vec<usize> = (0..mask.mask.len())
+                .filter(|&i| mask.mask[sorted_index.sorted_values[i].0])
+                .collect();
+            random_split_idx = rand::thread_rng().gen_range(0..valid_split_points.len());
+        }
+
+        // We start by putting all available observations in the right subtree
+        // and then move the (sorted by `feature_idx`) observations one by one to
+        // the left subtree and evaluate the quality of the resulting split. At each
+        // iteration, the obtained split is compared with `best`, in order
+        // to find the best possible split.
+        // The resulting split will then have the observations with a value of their `feature_idx`
+        // feature smaller than the split value in the left subtree and the others still in the right
+        // subtree
+        for i in 0..mask.mask.len() - 1 {
+            // (index of the observation, value of its `feature_idx` feature)
+            let (presorted_index, mut split_value) = sorted_index.sorted_values[i];
+
+            // Skip if the observation is unavailable in this subtree
+            if !mask.mask[presorted_index] {
+                continue;
+            }
+
+            // Target and weight of the current observation
+            let sample_class = &target[presorted_index];
+            let sample_weight = data.weight_for(presorted_index);
+
+            // Move the observation from the right subtree to the left subtree
+
+            // Decrement the weight on the class for this sample on the right
+            // side by the weight of this sample
+            *right_class_freq.get_mut(sample_class).unwrap() -= sample_weight;
+            weight_on_right_side -= sample_weight;
+
+            // Increment the weight on the class for this sample on the
+            // right side by the weight of this sample
+            *left_class_freq.entry(sample_class.clone()).or_insert(0.0) += sample_weight;
+            weight_on_left_side += sample_weight;
+
+            // Continue if the next value is equal, so that equal values end up in the same subtree
+            if (i < sorted_index.sorted_values.len() - 1)
+                && (sorted_index.sorted_values[i].1 - sorted_index.sorted_values[i + 1].1).abs()
+                    < F::cast(1e-5)
+            {
+                continue;
+            }
+
+            // If the split would result in too few samples in a leaf
+            // then skip computing the quality
+            if weight_on_right_side < hyperparameters.min_weight_leaf
+                || weight_on_left_side < hyperparameters.min_weight_leaf
+            {
+                continue;
+            }
+
+            // Don't need to compute the quality of other arbitrary splits,
+            // will only consider a split past the random split
+            if hyperparameters.random_split && i < random_split_idx {
+                continue;
+            }
+
+            // Calculate the quality of each resulting subset of the dataset
+            let (left_score, right_score) = match hyperparameters.split_quality {
+                SplitQuality::Gini => (
+                    gini_impurity(&right_class_freq),
+                    gini_impurity(&left_class_freq),
+                ),
+                SplitQuality::Entropy => (entropy(&right_class_freq), entropy(&left_class_freq)),
+            };
+
+            // Weight the qualities based on the number of samples in each subset
+            let w = weight_on_right_side / total_weight;
+            let score = w * left_score + (1.0 - w) * right_score;
+
+            // Take the midpoint from this value and the next one as split_value
+            if i < sorted_index.sorted_values.len() - 1 {
+                split_value = (split_value + sorted_index.sorted_values[i + 1].1) / F::cast(2.0);
+            }
+
+            // override best indices when score improved
+            *best = match best.take() {
+                None => Some((feature_idx, split_value, score)),
+                Some((_, _, best_score)) if score < best_score => {
+                    Some((feature_idx, split_value, score))
+                }
+                x => x,
+            };
+
+            // Don't need to compute anymore splits if this is for extra trees
+            if hyperparameters.random_split {
+                break;
+            }
+        }
+    }
+
     /// Recursively fits the node
-    fn fit<D: Data<Elem = F>, T: AsTargets<Elem = L> + Labels<Elem = L>>(
+    pub(crate) fn fit<D: Data<Elem = F>, T: AsTargets<Elem = L> + Labels<Elem = L>>(
         data: &DatasetBase<ArrayBase<D, Ix2>, T>,
         mask: &RowMask,
         hyperparameters: &DecisionTreeParams<F, L>,
         sorted_indices: &[SortedIndex<F>],
         depth: usize,
+        max_features: Option<usize>,
     ) -> Result<Self> {
         // compute weighted frequencies for target classes
         let parent_class_freq = data.label_frequencies_with_mask(&mask.mask);
@@ -224,92 +347,32 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
         // Find best split for current level
         let mut best = None;
 
-        // Iterate over all features
-        for (feature_idx, sorted_index) in sorted_indices.iter().enumerate() {
-            let mut right_class_freq = parent_class_freq.clone();
-            let mut left_class_freq = HashMap::new();
+        // Select subset of features to test
+        let mut test_features: HashMap<usize, &SortedIndex<F>> =
+            sorted_indices.iter().enumerate().collect();
 
-            // We keep a running total of the aggregate weight in the right split
-            // to avoid having to sum over the hash map
-            let total_weight = parent_class_freq.values().sum::<f32>();
-            let mut weight_on_right_side = total_weight;
-            let mut weight_on_left_side = 0.0;
+        if matches!(max_features, Some(_)) {
+            test_features = (0..max_features.unwrap())
+                .map(|_| {
+                    let idx = rand::thread_rng().gen_range(0..sorted_indices.len());
+                    (idx, test_features[&idx])
+                })
+                .collect();
+        }
 
-            // We start by putting all available observations in the right subtree
-            // and then move the (sorted by `feature_idx`) observations one by one to
-            // the left subtree and evaluate the quality of the resulting split. At each
-            // iteration, the obtained split is compared with `best`, in order
-            // to find the best possible split.
-            // The resulting split will then have the observations with a value of their `feature_idx`
-            // feature smaller than the split value in the left subtree and the others still in the right
-            // subtree
-            for i in 0..mask.mask.len() - 1 {
-                // (index of the observation, value of its `feature_idx` feature)
-                let (presorted_index, mut split_value) = sorted_index.sorted_values[i];
-
-                // Skip if the observation is unavailable in this subtree
-                if !mask.mask[presorted_index] {
-                    continue;
-                }
-
-                // Target and weight of the current observation
-                let sample_class = &target[presorted_index];
-                let sample_weight = data.weight_for(presorted_index);
-
-                // Move the observation from the right subtree to the left subtree
-
-                // Decrement the weight on the class for this sample on the right
-                // side by the weight of this sample
-                *right_class_freq.get_mut(sample_class).unwrap() -= sample_weight;
-                weight_on_right_side -= sample_weight;
-
-                // Increment the weight on the class for this sample on the
-                // right side by the weight of this sample
-                *left_class_freq.entry(sample_class.clone()).or_insert(0.0) += sample_weight;
-                weight_on_left_side += sample_weight;
-
-                // Continue if the next value is equal, so that equal values end up in the same subtree
-                if (sorted_index.sorted_values[i].1 - sorted_index.sorted_values[i + 1].1).abs()
-                    < F::cast(1e-5)
-                {
-                    continue;
-                }
-
-                // If the split would result in too few samples in a leaf
-                // then skip computing the quality
-                if weight_on_right_side < hyperparameters.min_weight_leaf
-                    || weight_on_left_side < hyperparameters.min_weight_leaf
-                {
-                    continue;
-                }
-
-                // Calculate the quality of each resulting subset of the dataset
-                let (left_score, right_score) = match hyperparameters.split_quality {
-                    SplitQuality::Gini => (
-                        gini_impurity(&right_class_freq),
-                        gini_impurity(&left_class_freq),
-                    ),
-                    SplitQuality::Entropy => {
-                        (entropy(&right_class_freq), entropy(&left_class_freq))
-                    }
-                };
-
-                // Weight the qualities based on the number of samples in each subset
-                let w = weight_on_right_side / total_weight;
-                let score = w * left_score + (1.0 - w) * right_score;
-
-                // Take the midpoint from this value and the next one as split_value
-                split_value = (split_value + sorted_index.sorted_values[i + 1].1) / F::cast(2.0);
-
-                // override best indices when score improved
-                best = match best.take() {
-                    None => Some((feature_idx, split_value, score)),
-                    Some((_, _, best_score)) if score < best_score => {
-                        Some((feature_idx, split_value, score))
-                    }
-                    x => x,
-                };
-            }
+        // Iterate over all features and find the best feature and split 
+        // Split may be random if the hyperparameter `random_split` is enabled
+        for (feature_idx, sorted_index) in test_features {
+            TreeNode::best_split(
+                &parent_class_freq,
+                feature_idx,
+                sorted_index,
+                data,
+                mask,
+                hyperparameters,
+                target,
+                &mut best,
+            )
         }
 
         // At this point all possible splits for all possible features have been computed
@@ -362,6 +425,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
                 hyperparameters,
                 sorted_indices,
                 depth + 1,
+                max_features,
             )?))
         } else {
             None
@@ -374,6 +438,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
                 hyperparameters,
                 sorted_indices,
                 depth + 1,
+                max_features,
             )?))
         } else {
             None
@@ -399,7 +464,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
     /// This removes parts of the tree which results in the same prediction for
     /// all sub-trees. This is called right after fit to ensure that the tree
     /// is small.
-    fn prune(&mut self) -> Option<L> {
+    pub(crate) fn prune(&mut self) -> Option<L> {
         if self.is_leaf() {
             return Some(self.prediction.clone());
         }
@@ -510,6 +575,19 @@ impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D
     }
 }
 
+pub(crate) fn set_up_tree<'a, F: Float, D: Data<Elem = F>>(
+    records: &ArrayBase<D, Ix2>,
+    feature_names: &'a Vec<String>,
+) -> (RowMask, Vec<SortedIndex<'a, F>>) {
+    let all_idxs = RowMask::all(records.nrows());
+    let sorted_indices: Vec<SortedIndex<F>> = (0..(records.ncols()))
+        .map(|feature_idx| {
+            SortedIndex::of_array_column(records, feature_idx, &feature_names[feature_idx])
+        })
+        .collect();
+    (all_idxs, sorted_indices)
+}
+
 impl<'a, F: Float, L: Label + 'a + std::fmt::Debug, D, T> Fit<ArrayBase<D, Ix2>, T, Error>
     for DecisionTreeParams<F, L>
 where
@@ -523,16 +601,9 @@ where
     fn fit(&self, dataset: &DatasetBase<ArrayBase<D, Ix2>, T>) -> Result<Self::Object> {
         self.validate()?;
 
-        let x = dataset.records();
-        let feature_names = dataset.feature_names();
-        let all_idxs = RowMask::all(x.nrows());
-        let sorted_indices: Vec<_> = (0..(x.ncols()))
-            .map(|feature_idx| {
-                SortedIndex::of_array_column(x, feature_idx, &feature_names[feature_idx])
-            })
-            .collect();
-
-        let mut root_node = TreeNode::fit(dataset, &all_idxs, self, &sorted_indices, 0)?;
+        let (records, feature_names) = (dataset.records(), dataset.feature_names());
+        let setup = set_up_tree(records, &feature_names);
+        let mut root_node = TreeNode::fit(dataset, &setup.0, self, &setup.1, 0, None)?;
         root_node.prune();
 
         Ok(DecisionTree {
@@ -559,6 +630,7 @@ impl<F: Float, L: Label + std::fmt::Debug> DecisionTree<F, L> {
             min_weight_leaf: 1.0,
             min_impurity_decrease: F::cast(0.00001),
             phantom: PhantomData,
+            random_split: false,
         }
     }
 
@@ -644,10 +716,14 @@ impl<F: Float, L: Label + std::fmt::Debug> DecisionTree<F, L> {
     pub fn export_to_tikz(&self) -> Tikz<F, L> {
         Tikz::new(self)
     }
+
+    pub fn root_node_by_val(self) -> TreeNode<F, L> {
+        self.root_node
+    }
 }
 
 /// Classify a sample &x recursively using the tree node `node`.
-fn make_prediction<F: Float, L: Label>(
+pub(crate) fn make_prediction<F: Float, L: Label>(
     x: &ArrayBase<impl Data<Elem = F>, Ix1>,
     node: &TreeNode<F, L>,
 ) -> L {
@@ -663,7 +739,7 @@ fn make_prediction<F: Float, L: Label>(
 /// Finds the most frequent class for a hash map of frequencies. If two
 /// classes have the same weight then the first class found with that
 /// frequency is returned.
-fn find_modal_class<L: Label>(class_freq: &HashMap<L, f32>) -> L {
+pub(crate) fn find_modal_class<L: Label>(class_freq: &HashMap<L, f32>) -> L {
     // TODO: Refactor this with fold_first
 
     let val = class_freq
