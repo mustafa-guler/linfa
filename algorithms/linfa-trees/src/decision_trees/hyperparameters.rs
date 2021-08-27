@@ -63,6 +63,8 @@ pub struct DecisionTreeParams<F, L> {
     pub min_weight_split: f32,
     pub min_weight_leaf: f32,
     pub min_impurity_decrease: F,
+    pub random_split: bool,
+    pub max_features: Option<usize>,
 
     pub phantom: PhantomData<L>,
 }
@@ -97,10 +99,23 @@ impl<F: Float, L: Label> DecisionTreeParams<F, L> {
         self.min_weight_leaf = min_weight_leaf;
         self
     }
-
     /// Sets the minimum decrease in impurity that a split needs to bring in order for it to be applied
     pub fn min_impurity_decrease(mut self, min_impurity_decrease: F) -> Self {
         self.min_impurity_decrease = min_impurity_decrease;
+        self
+    }
+
+    /// Sets whether or not a random split is considered at each decision node or all splits are considered
+    /// Will improve performance at the expense of accuracy. It is advised to use this only in forest contexts
+    /// where there are many decision trees.
+    pub fn random_split(mut self, random_split: bool) -> Self {
+        self.random_split = random_split;
+        self
+    }
+
+    /// Sets
+    pub fn max_features(mut self, max_features: Option<usize>) -> Self {
+        self.max_features = max_features;
         self
     }
 
@@ -109,7 +124,7 @@ impl<F: Float, L: Label> DecisionTreeParams<F, L> {
     /// ### Panics
     ///
     /// If the minimum impurity increase is not greater than zero
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self, num_features: usize) -> Result<()> {
         if self.min_impurity_decrease < F::epsilon() {
             return Err(Error::Parameters(format!(
                 "Minimum impurity decrease should be greater than zero, but was {}",
@@ -117,6 +132,19 @@ impl<F: Float, L: Label> DecisionTreeParams<F, L> {
             )));
         }
 
-        Ok(())
+        match self.max_features {
+            None => Ok(()),
+            Some(max) => {
+                if max > num_features {
+                    Err(Error::Parameters(format!(
+                "The max number of features to consider at each decision node {} cannot be greater than the total number of features {}",
+                max,
+                num_features
+            )))
+                } else {
+                    Ok(())
+                }
+            }
+        }
     }
 }
