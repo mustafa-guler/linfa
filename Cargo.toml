@@ -89,6 +89,7 @@ members = [
     "algorithms/linfa-tsne",
     "algorithms/linfa-preprocessing",
     "algorithms/linfa-nn",
+    "algorithms/linfa-ensemble",
     "datasets",
 ]
 
