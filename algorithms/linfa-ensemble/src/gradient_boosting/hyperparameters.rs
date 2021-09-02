@@ -1,8 +1,11 @@
-use crate::decision_trees::DecisionTreeParams;
+// TODO: Make this actually gradient boost. Currently a clone of bagging
 use linfa::{
-    error::{Error, Result},
+    traits::*,
+    error::Result,
     Float, Label,
 };
+
+use ndarray::{Array1, Array2};
 
 #[cfg(feature = "serde")]
 use serde_crate::{Deserialize, Serialize};
@@ -40,19 +43,24 @@ use serde_crate::{Deserialize, Serialize};
     serde(crate = "serde_crate")
 )]
 #[derive(Clone, Copy, Debug)]
-pub struct ExtraTreesParams<F, L> {
-    pub decision_tree_params: DecisionTreeParams<F, L>,
+pub struct GradBoostParams<F, L, O> {
     pub num_estimators: usize,
+    pub max_n_rows: Option<usize>,
+    pub estimator_params: O,
 }
 
-impl<F: Float, L: Label> ExtraTreesParams<F, L> {
-    /// Sets the hyperparameters for each inidividual decision tree
-    pub fn decision_tree_params(mut self, decision_tree_params: DecisionTreeParams<F, L>) -> Self {
-        self.decision_tree_params = decision_tree_params;
+impl<F: Float, L: Label, O> GradBoostParams<F, L, O>
+where
+   O: Fit<Array2<F>, Array1<L>, linfa::Error>,
+   O::Object: PredictInplace<Array2<F>, Array1<L>>,
+{
+    /// Sets the max size of the bootstrapped dataset. Use `None` for whatever the dataset size is
+    pub fn max_n_rows(mut self, max_n_rows: Option<usize>) -> Self {
+        self.max_n_rows = max_n_rows;
         self
     }
 
-    /// Sets the total number of trees that are generated
+    /// Sets the number of ensemble members that are generated
     pub fn num_estimators(mut self, num_estimators: usize) -> Self {
         self.num_estimators = num_estimators;
         self
@@ -62,14 +70,9 @@ impl<F: Float, L: Label> ExtraTreesParams<F, L> {
     ///
     /// ### Panics
     ///
-    /// If the minimum impurity increase is not greater than zero
+    /// Not yet implemented
     pub fn validate(&self) -> Result<()> {
-        if !self.decision_tree_params.random_split {
-            return Err(Error::Parameters(format!(
-                "Extra trees should always use a random split, but random_split is currently set to {}",
-                false.to_string()
-            )));
-        }
+        // TODO: Is there anything that we need to check?
 
         Ok(())
     }

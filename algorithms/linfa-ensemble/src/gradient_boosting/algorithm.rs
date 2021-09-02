@@ -1,7 +1,7 @@
-use ndarray::{Array1, ArrayBase, Data, Ix1, Ix2};
+// TODO: Currently clone of bagging. Make this actually gradient boost
+use ndarray::{Array2, Array1, ArrayBase, Data, Ix2};
 
 use super::hyperparameters::*;
-use crate::decision_trees::*;
 use linfa::{
     dataset::{AsTargets, Labels},
     error::Error,
@@ -19,78 +19,80 @@ use serde_crate::{Deserialize, Serialize};
     derive(Serialize, Deserialize),
     serde(crate = "serde_crate")
 )]
+
 #[derive(Debug)]
-pub struct ExtraTrees<F: Float, L: Label> {
-    all_trees: Vec<TreeNode<F, L>>,
-    num_features: usize,
+pub struct GradBoost<F: Float, L: Label, O> 
+where
+   O: Fit<Array2<F>, Array1<L>, linfa::Error>,
+   O::Object: PredictInplace<Array2<F>, Array1<L>>
+{
+    ensemble: Vec<O::Object>,
 }
 
-impl<F: Float, L: Label + std::fmt::Debug> ExtraTrees<F, L> {
+impl<F: Float, L: Label + std::fmt::Debug, O> GradBoost<F, L, O>
+where
+   O: Fit<Array2<F>, Array1<L>, linfa::Error>,
+   O::Object: PredictInplace<Array2<F>, Array1<L>>,
+{
     /// Defaults are provided if the optional parameters are not specified:
-    /// * `decision_tree_params = Default parameters for [decision trees](struct.DecisionTreeParams.html) with random_split overriden`
-    /// * `num_estimators = 100`
-    /// * `max_features = None`
-    /// The `max_features` default of `None` will be overriden to the square root of the number of features when a dataset is provided.
-    pub fn params() -> ExtraTreesParams<F, L> {
-        ExtraTreesParams {
-            decision_tree_params: DecisionTree::params().random_split(true).max_features(None),
-            num_estimators: 100,
+    /// * `num_estimators = 1`. 
+    /// * `max_n_rows = None`.
+    /// The `max_n_rows` default of `None` will be overwritten to the number of rows in the provided dataset. Thus, our bootstrapped data
+    /// sets will have the same size as our input data set.
+    pub fn params(estimator_params: O) -> GradBoostParams<F, L, O> {
+        GradBoostParams {
+            num_estimators: 1,
+            max_n_rows: None,
+            estimator_params,
         }
     }
 }
 
-impl<'a, F: Float, L: Label + 'a + std::fmt::Debug, D, T> Fit<ArrayBase<D, Ix2>, T, Error>
-    for ExtraTreesParams<F, L>
+impl<'a, F: Float, L: Label + 'a + std::fmt::Debug, O, D, T> Fit<ArrayBase<D, Ix2>, T, Error>
+    for GradBoostParams<F, L, O>
 where
     D: Data<Elem = F>,
     T: AsTargets<Elem = L> + Labels<Elem = L>,
+    O: Fit<Array2<F>, Array1<L>, linfa::Error>,
+    O::Object: PredictInplace<Array2<F>, Array1<L>>,
 {
-    type Object = ExtraTrees<F, L>;
+    type Object = GradBoost<F, L, O>;
 
-    /// Fit extremely randomized trees using hyperparameters in `self` on the `dataset`
+    /// Fit bagged ensemble of `O`'s predictors using hyperparameters in `self` on the `dataset`
     /// consisting of a matrix of features and an array of labels.
     fn fit(&self, dataset: &DatasetBase<ArrayBase<D, Ix2>, T>) -> Result<Self::Object> {
-        let num_features = dataset.records().ncols();
-        self.decision_tree_params.validate(num_features)?;
-        self.validate()?;
+        let num_rows = dataset.records().nrows();
+        // self.validate(num_rows)?;   <-- Uncomment if the validation ends up being nontrivial
 
-        let (records, feature_names) = (dataset.records(), dataset.feature_names());
+        // Overrides the `max_n_rows` hyperparameter once the dataset is provided
+        // to the actual number of rows if it is `None`
+        let true_max_rows = self
+            .max_n_rows
+            .unwrap_or_else(|| num_rows);
 
-        // Overrides the `max_features` hyperparameter once the dataset is provided
-        // to the square root of the number of features if it is `None`
-        let true_max_features = self
-            .decision_tree_params
-            .max_features
-            .unwrap_or_else(|| (num_features as f64).sqrt() as usize);
+        let mut ensemble = Vec::with_capacity(self.num_estimators);
+        let bootstrapper = dataset.bootstrap_samples(true_max_rows, rand::thread_rng());
 
-        let mut all_trees = Vec::with_capacity(self.num_estimators);
-
-        // Create all decision trees
+        // Create all weak learners in the ensemble
         for _ in 0..self.num_estimators {
-            let setup = set_up_dataset(records, &feature_names);
+            // Sample for bootstrapped dataset
+            let curr_dataset = bootstrapper.next().unwrap();
 
-            let mut root_node = TreeNode::fit(
-                dataset,
-                &setup.0,
-                &self.decision_tree_params,
-                &setup.1,
-                0,
-                Some(true_max_features),
-            )?;
-
-            root_node.prune();
-            all_trees.push(root_node);
+            let member = self.estimator_params.fit(curr_dataset)?;
+            ensemble.push(member);
         }
 
-        Ok(ExtraTrees {
-            all_trees,
-            num_features,
+        Ok(GradBoost {
+            ensemble,
         })
     }
 }
 
-impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D, Ix2>, Array1<L>>
-    for ExtraTrees<F, L>
+impl<F: Float, L: Label + Default, D: Data<Elem = F>, O> PredictInplace<ArrayBase<D, Ix2>, Array1<L>>
+    for GradBoost<F, L, O>
+where
+    O: Fit<Array2<F>, Array1<L>, linfa::Error>,
+    O::Object: PredictInplace<Array2<F>, Array1<L>>,
 {
     /// Make predictions for each row of a matrix of features `x`.
     fn predict_inplace(&self, x: &ArrayBase<D, Ix2>, y: &mut Array1<L>) {
@@ -100,8 +102,25 @@ impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D
             "The number of data points must match the number of output targets."
         );
 
-        for (row, target) in x.rows().into_iter().zip(y.iter_mut()) {
-            *target = make_prediction(self, &row);
+        let mut all_predictions = vec![];
+        for member in self.ensemble {
+            let mut target = self.default_target(x);
+            member.predict_inplace(x, &target);
+            all_predictions.push(target);
+        }
+
+        for (ind, target) in y.iter_mut().enumerate() {
+            // We now do this super cache-unfriendly operation. Someone let me know if there's a better way to do this
+            // that works with the trait bounds.
+            let mut prediction_frequencies: HashMap<L, usize> = HashMap::default();
+            for member_output in all_predictions {
+                let prediction = member_output[ind];
+                let value = prediction_frequencies.entry(prediction).or_default();
+                *value += 1;
+            }
+
+
+            *target = find_modal_class(&prediction_frequencies);
         }
     }
 
@@ -110,21 +129,24 @@ impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D
     }
 }
 
-/// Classify a sample &x
-fn make_prediction<F: Float, L: Label>(
-    model: &ExtraTrees<F, L>,
-    x: &ArrayBase<impl Data<Elem = F>, Ix1>,
-) -> L {
-    use crate::decision_trees::algorithm::make_prediction;
+/// Finds the most frequent class for a hash map of frequencies. If two
+/// classes have the same weight then the first class found with that
+/// frequency is returned.
+fn find_modal_class<L: Label>(class_freq: &HashMap<L, usize>) -> L {
+    let val = class_freq
+        .iter()
+        .fold(None, |acc, (idx, freq)| match acc {
+            None => Some((idx, freq)),
+            Some((_best_idx, best_freq)) => {
+                if best_freq > freq {
+                    acc
+                } else {
+                    Some((idx, freq))
+                }
+            }
+        })
+        .unwrap()
+        .0;
 
-    // Count predictions across all trees
-    let mut prediction_frequencies: HashMap<L, f32> = HashMap::with_capacity(model.num_features);
-    for root_node in &model.all_trees {
-        let prediction = make_prediction(x, root_node);
-        let value = prediction_frequencies.entry(prediction).or_default();
-        *value += 1.0;
-    }
-
-    // Return most frequent prediction
-    find_modal_class(&prediction_frequencies)
+    (*val).clone()
 }
