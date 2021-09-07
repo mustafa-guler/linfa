@@ -39,7 +39,7 @@ where
     /// * `max_n_rows = None`.
     /// The `max_n_rows` default of `None` will be overwritten to the number of rows in the provided dataset. Thus, our bootstrapped data
     /// sets will have the same size as our input data set.
-    pub fn params(estimator_params: O) -> GradBoostParams<F, L, O> {
+    pub fn params(estimator_params: O) -> GradBoostParams<O> {
         GradBoostParams {
             num_estimators: 1,
             max_n_rows: None,
@@ -49,14 +49,14 @@ where
 }
 
 impl<'a, F: Float, L: Label + 'a + std::fmt::Debug, O, D, T> Fit<ArrayBase<D, Ix2>, T, Error>
-    for GradBoostParams<F, L, O>
+    for GradBoostParams<O>
 where
     D: Data<Elem = F>,
     T: AsTargets<Elem = L> + Labels<Elem = L>,
     O: Fit<Array2<F>, Array1<L>, linfa::Error>,
     O::Object: PredictInplace<Array2<F>, Array1<L>>,
 {
-    type Object = GradBoost<F, L, O>;
+    type Object = GradBoost<O>;
 
     /// Fit bagged ensemble of `O`'s predictors using hyperparameters in `self` on the `dataset`
     /// consisting of a matrix of features and an array of labels.

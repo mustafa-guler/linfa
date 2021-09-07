@@ -1,14 +1,8 @@
 // TODO: Change anything related to decision trees
-use ndarray::{Array2, Array1, ArrayBase, Data, Ix2};
+use ndarray::{Array1, Array2};
 
 use super::hyperparameters::*;
-use linfa::{
-    dataset::{AsTargets, Labels},
-    error::Error,
-    error::Result,
-    traits::*,
-    DatasetBase, Float, Label,
-};
+use linfa::{error::Error, error::Result, traits::*, DatasetBase, Float, Label};
 use std::collections::HashMap;
 
 #[cfg(feature = "serde")]
@@ -19,23 +13,22 @@ use serde_crate::{Deserialize, Serialize};
     derive(Serialize, Deserialize),
     serde(crate = "serde_crate")
 )]
-
 #[derive(Debug)]
-pub struct Bagging<F: Float, L: Label, O> 
+pub struct Bagging<F: Float, L: Label, O>
 where
-   O: Fit<Array2<F>, Array1<L>, linfa::Error>,
-   O::Object: PredictInplace<Array2<F>, Array1<L>>
+    O: Fit<Array2<F>, Array1<L>, linfa::Error>,
+    O::Object: PredictInplace<Array2<F>, Array1<L>>,
 {
     ensemble: Vec<O::Object>,
 }
 
 impl<F: Float, L: Label + std::fmt::Debug, O> Bagging<F, L, O>
 where
-   O: Fit<Array2<F>, Array1<L>, linfa::Error>,
-   O::Object: PredictInplace<Array2<F>, Array1<L>>,
+    O: Fit<Array2<F>, Array1<L>, linfa::Error>,
+    O::Object: PredictInplace<Array2<F>, Array1<L>>,
 {
     /// Defaults are provided if the optional parameters are not specified:
-    /// * `num_estimators = 1`. 
+    /// * `num_estimators = 1`.
     /// * `max_n_rows = None`.
     /// The `max_n_rows` default of `None` will be overwritten to the number of rows in the provided dataset. Thus, our bootstrapped data
     /// sets will have the same size as our input data set.
@@ -48,11 +41,9 @@ where
     }
 }
 
-impl<'a, F: Float, L: Label + 'a + std::fmt::Debug, O, D, T> Fit<ArrayBase<D, Ix2>, T, Error>
-    for BaggingParams<O>
+impl<'a, F: Float, L: Label + 'a + std::fmt::Debug + std::marker::Copy, O>
+    Fit<Array2<F>, Array1<L>, Error> for BaggingParams<O>
 where
-    D: Data<Elem = F>,
-    T: AsTargets<Elem = L> + Labels<Elem = L>,
     O: Fit<Array2<F>, Array1<L>, linfa::Error>,
     O::Object: PredictInplace<Array2<F>, Array1<L>>,
 {
@@ -60,42 +51,38 @@ where
 
     /// Fit bagged ensemble of `O`'s predictors using hyperparameters in `self` on the `dataset`
     /// consisting of a matrix of features and an array of labels.
-    fn fit(&self, dataset: &DatasetBase<ArrayBase<D, Ix2>, T>) -> Result<Self::Object> {
+    fn fit(&self, dataset: &DatasetBase<Array2<F>, Array1<L>>) -> Result<Self::Object> {
         let num_rows = dataset.records().nrows();
         // self.validate(num_rows)?;   <-- Uncomment if the validation ends up being nontrivial
 
         // Overrides the `max_n_rows` hyperparameter once the dataset is provided
         // to the actual number of rows if it is `None`
-        let true_max_rows = self
-            .max_n_rows
-            .unwrap_or_else(|| num_rows);
+        let true_max_rows = self.max_n_rows.unwrap_or(num_rows);
 
+        let mut rng = rand::thread_rng();
         let mut ensemble = Vec::with_capacity(self.num_estimators);
-        let bootstrapper = dataset.bootstrap_samples(true_max_rows, rand::thread_rng());
+        let mut bootstrapper = dataset.bootstrap_samples(true_max_rows, &mut rng);
 
         // Create all weak learners in the ensemble
         for _ in 0..self.num_estimators {
             // Sample for bootstrapped dataset
             let curr_dataset = bootstrapper.next().unwrap();
 
-            let member = self.estimator_params.fit(curr_dataset)?;
+            let member = self.estimator_params.fit(&curr_dataset)?;
             ensemble.push(member);
         }
 
-        Ok(Bagging {
-            ensemble,
-        })
+        Ok(Bagging { ensemble })
     }
 }
 
-impl<F: Float, L: Label + Default, D: Data<Elem = F>, O> PredictInplace<ArrayBase<D, Ix2>, Array1<L>>
-    for Bagging<F, L, O>
+impl<F: Float, L: Label + Default, O> PredictInplace<Array2<F>, Array1<L>> for Bagging<F, L, O>
 where
     O: Fit<Array2<F>, Array1<L>, linfa::Error>,
     O::Object: PredictInplace<Array2<F>, Array1<L>>,
 {
     /// Make predictions for each row of a matrix of features `x`.
-    fn predict_inplace(&self, x: &ArrayBase<D, Ix2>, y: &mut Array1<L>) {
+    fn predict_inplace(&self, x: &Array2<F>, y: &mut Array1<L>) {
         assert_eq!(
             x.nrows(),
             y.len(),
@@ -103,9 +90,9 @@ where
         );
 
         let mut all_predictions = vec![];
-        for member in self.ensemble {
+        for member in &self.ensemble {
             let mut target = self.default_target(x);
-            member.predict_inplace(x, &target);
+            member.predict_inplace(x, &mut target);
             all_predictions.push(target);
         }
 
@@ -113,18 +100,17 @@ where
             // We now do this super cache-unfriendly operation. Someone let me know if there's a better way to do this
             // that works with the trait bounds.
             let mut prediction_frequencies: HashMap<L, usize> = HashMap::default();
-            for member_output in all_predictions {
-                let prediction = member_output[ind];
+            for member_output in &all_predictions {
+                let prediction = member_output[ind].clone();
                 let value = prediction_frequencies.entry(prediction).or_default();
                 *value += 1;
             }
-
 
             *target = find_modal_class(&prediction_frequencies);
         }
     }
 
-    fn default_target(&self, x: &ArrayBase<D, Ix2>) -> Array1<L> {
+    fn default_target(&self, x: &Array2<F>) -> Array1<L> {
         Array1::default(x.nrows())
     }
 }

@@ -43,16 +43,21 @@ use serde_crate::{Deserialize, Serialize};
     serde(crate = "serde_crate")
 )]
 #[derive(Clone, Copy, Debug)]
-pub struct GradBoostParams<F, L, O> {
+pub struct GradBoostParams<O> {
     pub num_estimators: usize,
     pub max_n_rows: Option<usize>,
     pub estimator_params: O,
 }
 
-impl<F: Float, L: Label, O> GradBoostParams<F, L, O>
+trait Indirection {
+    type F: Float;
+    type L: Label;
+}
+
+impl<O> GradBoostParams<O>
 where
-   O: Fit<Array2<F>, Array1<L>, linfa::Error>,
-   O::Object: PredictInplace<Array2<F>, Array1<L>>,
+   O: Indirection + Fit<Array2<O::F>, Array1<O::L>, linfa::Error>,
+   O::Object: PredictInplace<Array2<O::F>, Array1<O::L>>,
 {
     /// Sets the max size of the bootstrapped dataset. Use `None` for whatever the dataset size is
     pub fn max_n_rows(mut self, max_n_rows: Option<usize>) -> Self {

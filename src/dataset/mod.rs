@@ -4,7 +4,7 @@
 //! functionality.
 use ndarray::{
     Array1, Array2, ArrayBase, ArrayView, ArrayView1, ArrayView2, ArrayViewMut1, ArrayViewMut2,
-    Axis, CowArray, Ix2, Ix3, OwnedRepr, ScalarOperand,
+    Axis, CowArray, Ix1, Ix2, Ix3, OwnedRepr, ScalarOperand,
 };
 
 #[cfg(feature = "ndarray-linalg")]
@@ -234,6 +234,22 @@ pub trait FromTargetArray<'a, F> {
     /// Create self object from new target array
     fn new_targets(targets: Array2<F>) -> Self::Owned;
     fn new_targets_view(targets: ArrayView2<'a, F>) -> Self::View;
+}
+
+impl<'a, F> FromTargetArray<'a, F> for Array1<F>
+where
+    F: 'a,
+{
+    type Owned = Array1<F>;
+    type View = ArrayView1<'a, F>;
+
+    fn new_targets(targets: Array2<F>) -> Self::Owned {
+        targets.into_dimensionality::<Ix1>().unwrap()
+    }
+
+    fn new_targets_view(targets: ArrayView2<'a, F>) -> Self::View {
+        targets.into_dimensionality::<Ix1>().unwrap()
+    }
 }
 
 pub trait AsTargetsMut {

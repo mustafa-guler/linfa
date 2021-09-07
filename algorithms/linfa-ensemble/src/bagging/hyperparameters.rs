@@ -1,9 +1,5 @@
 // TODO: Change anything related to decision trees
-use linfa::{
-    traits::*,
-    error::Result,
-    Float, Label,
-};
+use linfa::{error::Result, traits::*, Float, Label};
 
 use ndarray::{Array1, Array2};
 
@@ -49,10 +45,16 @@ pub struct BaggingParams<O> {
     pub estimator_params: O,
 }
 
-impl<F: Float, L: Label, O> BaggingParams<O>
+/// Indirection helper trait used to specify the generic subtypes of the ensemble members.
+pub trait Indirection {
+    type F: Float;
+    type L: Label;
+}
+
+impl<O> BaggingParams<O>
 where
-   O: Fit<Array2<F>, Array1<L>, linfa::Error>,
-   O::Object: PredictInplace<Array2<F>, Array1<L>>,
+    O: Indirection + Fit<Array2<O::F>, Array1<O::L>, linfa::Error>,
+    O::Object: PredictInplace<Array2<O::F>, Array1<O::L>>,
 {
     /// Sets the max size of the bootstrapped dataset. Use `None` for whatever the dataset size is
     pub fn max_n_rows(mut self, max_n_rows: Option<usize>) -> Self {
