@@ -125,7 +125,7 @@ pub struct TreeNode<F, L> {
     right_child: Option<Box<TreeNode<F, L>>>,
     leaf_node: bool,
     prediction: L,
-    parent_class_freq: Option<Vec<(L, f32)>>,
+    parent_class_freq: Option<Vec<(L, F)>>,
     num_samples: Option<usize>,
     depth: usize,
 }
@@ -161,7 +161,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
             right_child: None,
             leaf_node: true,
             prediction,
-            parent_class_freq: Some(parent_class_freq.into_iter().collect::<Vec<_>>()),
+            parent_class_freq: Some(parent_class_freq.into_iter().map(|(k, v)| {(k, F::from(v).unwrap())}).collect::<Vec<_>>()),
             num_samples: Some(num_samples),
             depth,
         }
@@ -191,7 +191,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
     /// A prediction distribution is defined as the distribution of class labels in a leaf node.
     /// Although a decision tree is not a probabilistic model, the frequency of the labels in the
     /// leaf node can be interpreted as a probability distribution over the labels.
-    pub fn prediction_distribution(&self) -> Option<Vec<(L, f32)>> {
+    pub fn prediction_distribution(&self) -> Option<Vec<(L, F)>> {
         self.parent_class_freq.clone()
     }
 
@@ -761,7 +761,7 @@ pub(crate) fn make_prediction<F: Float, L: Label>(
 pub(crate) fn make_prediction_distribution<'a, F: Float, L: Label>(
     x: &'a ArrayBase<impl Data<Elem = F>, Ix1>,
     node: &'a TreeNode<F, L>,
-) -> (&'a Vec<(L, f32)>, usize) {
+) -> (&'a Vec<(L, F)>, usize) {
     if node.leaf_node {
         // This is infallible because leaf nodes will always contain a frequency distribution by
         // construction.
@@ -815,15 +815,15 @@ impl<F: Float, L: Label + Default> DecisionTree<F, L> {
 fn get_prediction_freqs<F: Float, L: Label>(
     model: &DecisionTree<F, L>,
     x: &ArrayBase<impl Data<Elem = F>, Ix1>,
-) -> HashMap<L, f32> {
-    let mut prediction_frequencies: HashMap<L, f32> = HashMap::with_capacity(model.num_features);
+) -> HashMap<L, F> {
+    let mut prediction_frequencies: HashMap<L, F> = HashMap::with_capacity(model.num_features);
 
     // Verify that prediction probs is frequency, and not already weighted by the number of samples
     let (prediction_proba, num_samples) = make_prediction_distribution(x, &model.root_node);
-    let num_samples = num_samples as f32;
+    let num_samples = F::from(num_samples as f32).unwrap();
     for (key, value) in &*prediction_proba {
-        let freq = prediction_frequencies.entry(key.clone()).or_insert(0.0f32);
-        *freq += value * num_samples;
+        let freq = prediction_frequencies.entry(key.clone()).or_insert(F::zero());
+        *freq += *value * num_samples;
     }
 
     prediction_frequencies

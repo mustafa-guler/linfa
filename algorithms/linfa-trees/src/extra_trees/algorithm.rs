@@ -167,16 +167,16 @@ fn make_prediction<F: Float, L: Label>(
 fn get_prediction_freqs<F: Float, L: Label>(
     model: &ExtraTrees<F, L>,
     x: &ArrayBase<impl Data<Elem = F>, Ix1>,
-) -> HashMap<L, f32> {
-    let mut prediction_frequencies: HashMap<L, f32> = HashMap::with_capacity(model.num_features);
+) -> HashMap<L, F> {
+    let mut prediction_frequencies: HashMap<L, F> = HashMap::with_capacity(model.num_features);
 
     // Verify that prediction probs is frequency, and not already weighted by the number of samples
     for root_node in &model.all_trees {
         let (prediction_proba, num_samples) = make_prediction_distribution(x, root_node);
-        let num_samples = num_samples as f32;
+        let num_samples = F::from(num_samples as f32).unwrap();
         for (key, value) in &*prediction_proba {
-            let freq = prediction_frequencies.entry(key.clone()).or_insert(0.0f32);
-            *freq += value * num_samples;
+            let freq = prediction_frequencies.entry(key.clone()).or_insert(F::zero());
+            *freq += *value * num_samples;
         }
     }
 
