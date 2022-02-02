@@ -19,7 +19,7 @@ use serde_crate::{Deserialize, Serialize};
     derive(Serialize, Deserialize),
     serde(crate = "serde_crate")
 )]
-#[derive(Debug)]
+#[derive(Eq, PartialEq, Hash, Debug)]
 pub struct ExtraTrees<F: Float, L: Label> {
     all_trees: Vec<TreeNode<F, L>>,
     num_features: usize,
