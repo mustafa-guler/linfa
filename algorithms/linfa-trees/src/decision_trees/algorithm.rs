@@ -125,6 +125,8 @@ pub struct TreeNode<F, L> {
     right_child: Option<Box<TreeNode<F, L>>>,
     leaf_node: bool,
     prediction: L,
+    parent_class_freq: Option<HashMap<L, f32>>,
+    num_samples: Option<usize>,
     depth: usize,
 }
 
@@ -144,7 +146,12 @@ impl<F, L> PartialEq for TreeNode<F, L> {
 }
 
 impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
-    fn empty_leaf(prediction: L, depth: usize) -> Self {
+    fn empty_leaf(
+        prediction: L,
+        parent_class_freq: HashMap<L, f32>,
+        num_samples: usize,
+        depth: usize,
+    ) -> Self {
         TreeNode {
             feature_idx: 0,
             feature_name: "".to_string(),
@@ -154,6 +161,8 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
             right_child: None,
             leaf_node: true,
             prediction,
+            parent_class_freq: Some(parent_class_freq),
+            num_samples: Some(num_samples),
             depth,
         }
     }
@@ -175,6 +184,15 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
         } else {
             None
         }
+    }
+
+    /// Returns prediction distribution for leaf nodes and `None` for internal nodes.
+    ///
+    /// A prediction distribution is defined as the distribution of class labels in a leaf node.
+    /// Although a decision tree is not a probabilistic model, the frequency of the labels in the
+    /// leaf node can be interpreted as a probability distribution over the labels.
+    pub fn prediction_distribution(&self) -> Option<HashMap<L, f32>> {
+        self.parent_class_freq.clone()
     }
 
     /// Returns both children, first left then right
@@ -332,7 +350,12 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
                 .map(|max_depth| depth >= max_depth)
                 .unwrap_or(false)
         {
-            return Ok(Self::empty_leaf(prediction, depth));
+            return Ok(Self::empty_leaf(
+                prediction,
+                parent_class_freq,
+                mask.nsamples,
+                depth,
+            ));
         }
 
         // Find best split for current level
@@ -388,7 +411,12 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
         };
 
         if impurity_decrease < hyperparameters.min_impurity_decrease {
-            return Ok(Self::empty_leaf(prediction, depth));
+            return Ok(Self::empty_leaf(
+                prediction,
+                parent_class_freq,
+                mask.nsamples,
+                depth,
+            ));
         }
 
         let (best_feature_idx, best_split_value, _) = best.unwrap();
@@ -445,6 +473,8 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
             right_child,
             leaf_node,
             prediction,
+            parent_class_freq: None,
+            num_samples: None,
             depth,
         })
     }
@@ -722,6 +752,108 @@ pub(crate) fn make_prediction<F: Float, L: Label>(
     } else {
         make_prediction(x, node.right_child.as_ref().unwrap())
     }
+}
+
+/// Classify a sample &x recusively using the tree node `node`.
+///
+/// This function classifies a sample and returns a probability distribution over the class labels.
+/// See [`TreeNode::make_prediction_distribution`] for more details.
+pub(crate) fn make_prediction_distribution<'a, F: Float, L: Label>(
+    x: &'a ArrayBase<impl Data<Elem = F>, Ix1>,
+    node: &'a TreeNode<F, L>,
+) -> (&'a HashMap<L, f32>, usize) {
+    if node.leaf_node {
+        // This is infallible because leaf nodes will always contain a frequency distribution by
+        // construction.
+        (
+            node.parent_class_freq.as_ref().unwrap(),
+            node.num_samples.unwrap(),
+        )
+    } else if x[node.feature_idx] < node.split_value {
+        make_prediction_distribution(x, node.left_child.as_ref().unwrap())
+    } else {
+        make_prediction_distribution(x, node.right_child.as_ref().unwrap())
+    }
+}
+
+impl<F: Float, L: Label + Default> DecisionTree<F, L> {
+    // /// Obtain an ordered ranked list of tuples for each row of the input data.
+    // ///
+    // /// The tuples that are returned are structured as (L, f32), where L is the label and the f32
+    // /// items, when normalized, represent the probability of that label.
+    //pub fn predict_proba(&self, x: &ArrayBase<impl Data<Elem = F>, Ix2>, y: &mut Array1<Vec<(L, f32)>>) {
+    //    assert_eq!(
+    //        x.nrows(),
+    //        y.len(),
+    //        "The number of data points must match the number of output targets."
+    //    );
+
+    //    for (row, target) in x.rows().into_iter().zip(y.iter_mut()) {
+    //        *target = make_prediction_proba(self, &row);
+    //    }
+    //}
+    //
+
+    /// Obtain an ordered ranked list of predictions for each row of the input data.
+    pub fn predict_ranked(&self, x: &ArrayBase<impl Data<Elem = F>, Ix2>) -> Array1<Vec<L>> {
+        let mut y: Array1<Vec<L>> = Array1::from_elem(x.nrows(), vec![]);
+        assert_eq!(
+            x.nrows(),
+            y.len(),
+            "The number of data points must match the number of output targets."
+        );
+
+        for (row, target) in x.rows().into_iter().zip(y.iter_mut()) {
+            *target = make_ranked_prediction(self, &row);
+        }
+
+        y
+    }
+}
+
+/// Obtain the probability distribution over labels for an input row of the data.
+fn get_prediction_freqs<F: Float, L: Label>(
+    model: &DecisionTree<F, L>,
+    x: &ArrayBase<impl Data<Elem = F>, Ix1>,
+) -> HashMap<L, f32> {
+    let mut prediction_frequencies: HashMap<L, f32> = HashMap::with_capacity(model.num_features);
+
+    // Verify that prediction probs is frequency, and not already weighted by the number of samples
+    let (prediction_proba, num_samples) = make_prediction_distribution(x, &model.root_node);
+    let num_samples = num_samples as f32;
+    for (key, value) in &*prediction_proba {
+        let freq = prediction_frequencies.entry(key.clone()).or_insert(0.0f32);
+        *freq += value * num_samples;
+    }
+
+    prediction_frequencies
+}
+
+// /// For a given input datum, output a ranked list of labels along with the unnormalized probability
+// /// of that label.
+// fn make_prediction_proba<F: Float, L: Label>(
+//     model: &DecisionTree<F, L>,
+//     x: &ArrayBase<impl Data<Elem = F>, Ix1>,
+// ) -> Vec<(L, f32)> {
+//     let prediction_frequencies = get_prediction_freqs(model, x);
+//     let mut prediction_vec = prediction_frequencies.into_iter().collect::<Vec<_>>();
+//     prediction_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+//     prediction_vec
+// }
+
+/// For a given input datum, output a ranked list of labels.
+fn make_ranked_prediction<F: Float, L: Label>(
+    model: &DecisionTree<F, L>,
+    x: &ArrayBase<impl Data<Elem = F>, Ix1>,
+) -> Vec<L> {
+    let prediction_frequencies = get_prediction_freqs(model, x);
+    let mut keys = prediction_frequencies.keys().cloned().collect::<Vec<_>>();
+    keys.sort_by(|a, b| {
+        prediction_frequencies[a]
+            .partial_cmp(&prediction_frequencies[b])
+            .unwrap()
+    });
+    keys
 }
 
 /// Finds the most frequent class for a hash map of frequencies. If two

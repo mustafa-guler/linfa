@@ -110,6 +110,40 @@ impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D
     }
 }
 
+impl<F: Float, L: Label + Default> ExtraTrees<F, L> {
+    // /// Obtain an ordered ranked list of tuples for each row of the input data.
+    // ///
+    // /// The tuples that are returned are structured as (L, f32), where L is the label and the f32
+    // /// items, when normalized, represent the probability of that label.
+    // pub fn predict_proba(&self, x: &ArrayBase<impl Data<Elem = F>, Ix2>, y: &mut Array1<Vec<(L, f32)>>) {
+    //     assert_eq!(
+    //         x.nrows(),
+    //         y.len(),
+    //         "The number of data points must match the number of output targets."
+    //     );
+
+    //     for (row, target) in x.rows().into_iter().zip(y.iter_mut()) {
+    //         *target = make_prediction_proba(self, &row);
+    //     }
+    // }
+
+    /// Obtain an ordered ranked list of predictions for each row of the input data.
+    pub fn predict_ranked(&self, x: &ArrayBase<impl Data<Elem = F>, Ix2>) -> Array1<Vec<L>> {
+        let mut y: Array1<Vec<L>> = Array1::from_elem(x.nrows(), vec![]);
+        assert_eq!(
+            x.nrows(),
+            y.len(),
+            "The number of data points must match the number of output targets."
+        );
+
+        for (row, target) in x.rows().into_iter().zip(y.iter_mut()) {
+            *target = make_ranked_prediction(self, &row);
+        }
+
+        y
+    }
+}
+
 /// Classify a sample &x
 fn make_prediction<F: Float, L: Label>(
     model: &ExtraTrees<F, L>,
@@ -127,4 +161,51 @@ fn make_prediction<F: Float, L: Label>(
 
     // Return most frequent prediction
     find_modal_class(&prediction_frequencies)
+}
+
+/// Obtain the probability distribution over labels for an input row of the data.
+fn get_prediction_freqs<F: Float, L: Label>(
+    model: &ExtraTrees<F, L>,
+    x: &ArrayBase<impl Data<Elem = F>, Ix1>,
+) -> HashMap<L, f32> {
+    let mut prediction_frequencies: HashMap<L, f32> = HashMap::with_capacity(model.num_features);
+
+    // Verify that prediction probs is frequency, and not already weighted by the number of samples
+    for root_node in &model.all_trees {
+        let (prediction_proba, num_samples) = make_prediction_distribution(x, root_node);
+        let num_samples = num_samples as f32;
+        for (key, value) in &*prediction_proba {
+            let freq = prediction_frequencies.entry(key.clone()).or_insert(0.0f32);
+            *freq += value * num_samples;
+        }
+    }
+
+    prediction_frequencies
+}
+
+// /// For a given input datum, output a ranked list of labels along with the unnormalized probability
+// /// of that label.
+// fn make_prediction_proba<F: Float, L: Label>(
+//     model: &ExtraTrees<F, L>,
+//     x: &ArrayBase<impl Data<Elem = F>, Ix1>,
+// ) -> Vec<(L, f32)> {
+//     let prediction_frequencies = get_prediction_freqs(model, x);
+//     let mut prediction_vec = prediction_frequencies.into_iter().collect::<Vec<_>>();
+//     prediction_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+//     prediction_vec
+// }
+
+/// For a given input datum, output a ranked list of labels.
+fn make_ranked_prediction<F: Float, L: Label>(
+    model: &ExtraTrees<F, L>,
+    x: &ArrayBase<impl Data<Elem = F>, Ix1>,
+) -> Vec<L> {
+    let prediction_frequencies = get_prediction_freqs(model, x);
+    let mut keys = prediction_frequencies.keys().cloned().collect::<Vec<_>>();
+    keys.sort_by(|a, b| {
+        prediction_frequencies[a]
+            .partial_cmp(&prediction_frequencies[b])
+            .unwrap()
+    });
+    keys
 }
