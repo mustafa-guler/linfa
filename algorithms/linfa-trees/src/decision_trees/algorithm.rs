@@ -125,7 +125,7 @@ pub struct TreeNode<F, L> {
     right_child: Option<Box<TreeNode<F, L>>>,
     leaf_node: bool,
     prediction: L,
-    parent_class_freq: Option<HashMap<L, f32>>,
+    parent_class_freq: Option<Vec<(L, f32)>>,
     num_samples: Option<usize>,
     depth: usize,
 }
@@ -161,7 +161,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
             right_child: None,
             leaf_node: true,
             prediction,
-            parent_class_freq: Some(parent_class_freq),
+            parent_class_freq: Some(parent_class_freq.into_iter().collect::<Vec<_>>()),
             num_samples: Some(num_samples),
             depth,
         }
@@ -191,7 +191,7 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
     /// A prediction distribution is defined as the distribution of class labels in a leaf node.
     /// Although a decision tree is not a probabilistic model, the frequency of the labels in the
     /// leaf node can be interpreted as a probability distribution over the labels.
-    pub fn prediction_distribution(&self) -> Option<HashMap<L, f32>> {
+    pub fn prediction_distribution(&self) -> Option<Vec<(L, f32)>> {
         self.parent_class_freq.clone()
     }
 
@@ -761,7 +761,7 @@ pub(crate) fn make_prediction<F: Float, L: Label>(
 pub(crate) fn make_prediction_distribution<'a, F: Float, L: Label>(
     x: &'a ArrayBase<impl Data<Elem = F>, Ix1>,
     node: &'a TreeNode<F, L>,
-) -> (&'a HashMap<L, f32>, usize) {
+) -> (&'a Vec<(L, f32)>, usize) {
     if node.leaf_node {
         // This is infallible because leaf nodes will always contain a frequency distribution by
         // construction.
