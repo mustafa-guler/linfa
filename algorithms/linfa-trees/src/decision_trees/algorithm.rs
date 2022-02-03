@@ -137,9 +137,9 @@ impl<F: Float, L: Label> Hash for TreeNode<F, L> {
     }
 }
 
-impl<F, L> Eq for TreeNode<F, L> {}
+impl<F, L: Label> Eq for TreeNode<F, L> {}
 
-impl<F, L> PartialEq for TreeNode<F, L> {
+impl<F, L: Label> PartialEq for TreeNode<F, L> {
     fn eq(&self, other: &Self) -> bool {
         self.feature_idx == other.feature_idx
     }
