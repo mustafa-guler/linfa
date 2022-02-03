@@ -37,6 +37,21 @@ impl<F: Float, L: Label + std::fmt::Debug> ExtraTrees<F, L> {
             num_estimators: 100,
         }
     }
+
+    pub fn predict_ranked(&self, x: &ArrayBase<impl Data<Elem = F>, Ix2>) -> Array1<Vec<L>> {
+        let mut y: Array1<Vec<L>> = Array1::from_elem(x.nrows(), vec![]);
+        assert_eq!(
+            x.nrows(),
+            y.len(),
+            "The number of data points must match the number of output targets."
+        );
+
+        for (row, target) in x.rows().into_iter().zip(y.iter_mut()) {
+            *target = make_ranked_prediction(self, &row);
+        }
+
+        y
+    }
 }
 
 impl<'a, F: Float, L: Label + 'a + std::fmt::Debug, D, T> Fit<ArrayBase<D, Ix2>, T, Error>
@@ -107,40 +122,6 @@ impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D
 
     fn default_target(&self, x: &ArrayBase<D, Ix2>) -> Array1<L> {
         Array1::default(x.nrows())
-    }
-}
-
-impl<F: Float, L: Label + Default> ExtraTrees<F, L> {
-    // /// Obtain an ordered ranked list of tuples for each row of the input data.
-    // ///
-    // /// The tuples that are returned are structured as (L, f32), where L is the label and the f32
-    // /// items, when normalized, represent the probability of that label.
-    // pub fn predict_proba(&self, x: &ArrayBase<impl Data<Elem = F>, Ix2>, y: &mut Array1<Vec<(L, f32)>>) {
-    //     assert_eq!(
-    //         x.nrows(),
-    //         y.len(),
-    //         "The number of data points must match the number of output targets."
-    //     );
-
-    //     for (row, target) in x.rows().into_iter().zip(y.iter_mut()) {
-    //         *target = make_prediction_proba(self, &row);
-    //     }
-    // }
-
-    /// Obtain an ordered ranked list of predictions for each row of the input data.
-    pub fn predict_ranked(&self, x: &ArrayBase<impl Data<Elem = F>, Ix2>) -> Array1<Vec<L>> {
-        let mut y: Array1<Vec<L>> = Array1::from_elem(x.nrows(), vec![]);
-        assert_eq!(
-            x.nrows(),
-            y.len(),
-            "The number of data points must match the number of output targets."
-        );
-
-        for (row, target) in x.rows().into_iter().zip(y.iter_mut()) {
-            *target = make_ranked_prediction(self, &row);
-        }
-
-        y
     }
 }
 
