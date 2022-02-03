@@ -116,7 +116,7 @@ impl<'a, F: Float> SortedIndex<'a, F> {
 )]
 #[derive(Debug, Clone)]
 /// A node in the decision tree
-pub struct TreeNode<F, L> {
+pub struct TreeNode<F, L: Label> {
     feature_idx: usize,
     feature_name: String,
     split_value: F,
