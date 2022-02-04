@@ -12,12 +12,15 @@ use linfa::{
 use std::collections::HashMap;
 
 #[cfg(feature = "serde")]
-use serde_crate::{Deserialize, Serialize};
+use serde_crate::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize),
-    serde(crate = "serde_crate")
+    serde(
+        crate = "serde_crate",
+        bound = "L: DeserializeOwned + Serialize, F: DeserializeOwned + Serialize"
+    )
 )]
 #[derive(Debug)]
 pub struct ExtraTrees<F: Float, L: Label> {

@@ -19,7 +19,7 @@ use linfa::{
 };
 
 #[cfg(feature = "serde")]
-use serde_crate::{Deserialize, Serialize};
+use serde_crate::{de::DeserializeOwned, Deserialize, Serialize};
 
 /// RowMask tracks observations
 ///
@@ -112,11 +112,14 @@ impl<'a, F: Float> SortedIndex<'a, F> {
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize),
-    serde(crate = "serde_crate")
+    serde(
+        crate = "serde_crate",
+        bound = "L: Label + DeserializeOwned + Serialize, F: Float + DeserializeOwned + Serialize"
+    )
 )]
 #[derive(Debug, Clone)]
 /// A node in the decision tree
-pub struct TreeNode<F, L: Label> {
+pub struct TreeNode<F, L> {
     feature_idx: usize,
     feature_name: String,
     split_value: F,
@@ -566,7 +569,10 @@ impl<F: Float, L: Label + std::fmt::Debug> TreeNode<F, L> {
 #[cfg_attr(
     feature = "serde",
     derive(Serialize, Deserialize),
-    serde(crate = "serde_crate")
+    serde(
+        crate = "serde_crate",
+        bound = "L: DeserializeOwned + Serialize, F: DeserializeOwned + Serialize"
+    )
 )]
 #[derive(Debug)]
 pub struct DecisionTree<F: Float, L: Label> {
