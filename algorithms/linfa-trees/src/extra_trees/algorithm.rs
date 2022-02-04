@@ -23,7 +23,7 @@ use serde_crate::{de::DeserializeOwned, Deserialize, Serialize};
     )
 )]
 #[derive(Debug)]
-pub struct ExtraTrees<F: Float, L: Label> {
+pub struct ExtraTrees<F: Float, L: Label + std::fmt::Debug> {
     all_trees: Vec<TreeNode<F, L>>,
     num_features: usize,
 }
@@ -57,7 +57,7 @@ impl<F: Float, L: Label + std::fmt::Debug> ExtraTrees<F, L> {
     }
 }
 
-impl<'a, F: Float, L: Label + 'a + std::fmt::Debug, D, T> Fit<ArrayBase<D, Ix2>, T, Error>
+impl<F: Float, L: Label + std::fmt::Debug, D, T> Fit<ArrayBase<D, Ix2>, T, Error>
     for ExtraTreesParams<F, L>
 where
     D: Data<Elem = F>,
@@ -107,7 +107,7 @@ where
     }
 }
 
-impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D, Ix2>, Array1<L>>
+impl<F: Float, L: Label + Default + std::fmt::Debug, D: Data<Elem = F>> PredictInplace<ArrayBase<D, Ix2>, Array1<L>>
     for ExtraTrees<F, L>
 {
     /// Make predictions for each row of a matrix of features `x`.
@@ -129,7 +129,7 @@ impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D
 }
 
 /// Classify a sample &x
-fn make_prediction<F: Float, L: Label>(
+fn make_prediction<F: Float, L: Label + std::fmt::Debug>(
     model: &ExtraTrees<F, L>,
     x: &ArrayBase<impl Data<Elem = F>, Ix1>,
 ) -> L {
@@ -148,7 +148,7 @@ fn make_prediction<F: Float, L: Label>(
 }
 
 /// Obtain the probability distribution over labels for an input row of the data.
-fn get_prediction_freqs<F: Float, L: Label>(
+fn get_prediction_freqs<F: Float, L: Label + std::fmt::Debug>(
     model: &ExtraTrees<F, L>,
     x: &ArrayBase<impl Data<Elem = F>, Ix1>,
 ) -> HashMap<L, f32> {
@@ -180,7 +180,7 @@ fn get_prediction_freqs<F: Float, L: Label>(
 // }
 
 /// For a given input datum, output a ranked list of labels.
-fn make_ranked_prediction<F: Float, L: Label>(
+fn make_ranked_prediction<F: Float, L: Label + std::fmt::Debug>(
     model: &ExtraTrees<F, L>,
     x: &ArrayBase<impl Data<Elem = F>, Ix1>,
 ) -> Vec<L> {
