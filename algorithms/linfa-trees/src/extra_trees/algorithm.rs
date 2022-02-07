@@ -37,6 +37,39 @@ impl<F: Float, L: Label + std::fmt::Debug> ExtraTrees<F, L> {
             num_estimators: 100,
         }
     }
+
+    /// Obtain an ordered ranked list of predictions for each row of the input data.
+    pub fn predict_ranked(&self, x: &ArrayBase<impl Data<Elem = F>, Ix2>) -> Array1<Vec<L>> {
+        let mut y: Array1<Vec<L>> = Array1::from_elem(x.nrows(), vec![]);
+        assert_eq!(
+            x.nrows(),
+            y.len(),
+            "The number of data points must match the number of output targets."
+        );
+
+        for (row, target) in x.rows().into_iter().zip(y.iter_mut()) {
+            *target = make_ranked_prediction(self, &row);
+        }
+
+        y
+    } 
+}
+
+
+
+/// For a given input datum, output a ranked list of labels.
+fn make_ranked_prediction<F: Float, L: Label + std::fmt::Debug>(
+    model: &ExtraTrees<F, L>,
+    x: &ArrayBase<impl Data<Elem = F>, Ix1>,
+) -> Vec<L> {
+    let prediction_frequencies = get_prediction_freqs(model, x);
+    let mut keys = prediction_frequencies.keys().cloned().collect::<Vec<_>>();
+    keys.sort_by(|a, b| {
+        prediction_frequencies[b]
+            .partial_cmp(&prediction_frequencies[a])
+            .unwrap()
+    });
+    keys
 }
 
 impl<'a, F: Float, L: Label + 'a + std::fmt::Debug, D, T> Fit<ArrayBase<D, Ix2>, T, Error>
@@ -89,7 +122,7 @@ where
     }
 }
 
-impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D, Ix2>, Array1<L>>
+impl<F: Float, L: Label + Default + std::fmt::Debug, D: Data<Elem = F>> PredictInplace<ArrayBase<D, Ix2>, Array1<L>>
     for ExtraTrees<F, L>
 {
     /// Make predictions for each row of a matrix of features `x`.
@@ -111,7 +144,7 @@ impl<F: Float, L: Label + Default, D: Data<Elem = F>> PredictInplace<ArrayBase<D
 }
 
 /// Classify a sample &x
-fn make_prediction<F: Float, L: Label>(
+fn make_prediction<F: Float, L: Label + std::fmt::Debug>(
     model: &ExtraTrees<F, L>,
     x: &ArrayBase<impl Data<Elem = F>, Ix1>,
 ) -> L {
@@ -127,4 +160,26 @@ fn make_prediction<F: Float, L: Label>(
 
     // Return most frequent prediction
     find_modal_class(&prediction_frequencies)
+}
+
+/// Obtain the probability distribution over labels for an input row of the data.
+fn get_prediction_freqs<F: Float, L: Label + std::fmt::Debug>(
+    model: &ExtraTrees<F, L>,
+    x: &ArrayBase<impl Data<Elem = F>, Ix1>,
+) -> HashMap<L, F> {
+    let mut prediction_frequencies: HashMap<L, F> = HashMap::with_capacity(model.num_features);
+
+    // Verify that prediction probs is frequency, and not already weighted by the number of samples
+    for root_node in &model.all_trees {
+        let prediction_proba = make_prediction_distribution(x, root_node);
+        let mut clon = prediction_proba.clone();
+        clon.sort_by(|a, b| { b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal) });
+        for (key, value) in &*prediction_proba {
+            let freq = prediction_frequencies.entry(key.clone()).or_insert(F::zero());
+            *freq += *value;
+        }
+    }
+
+    // println!("{:?}", prediction_frequencies.clone());
+    prediction_frequencies
 }
